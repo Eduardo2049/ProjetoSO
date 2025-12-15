@@ -7,7 +7,7 @@
 #include <linux/mutex.h>
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Eduardo");
+MODULE_AUTHOR("Grupo 5");
 MODULE_DESCRIPTION("Driver de Min Heap (Manual)");
 MODULE_VERSION("1.0");
 
