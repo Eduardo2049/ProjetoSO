@@ -8,7 +8,7 @@
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Grupo 5");
-MODULE_DESCRIPTION("Driver de Min Heap (Manual)");
+MODULE_DESCRIPTION("Driver de Min Heap");
 MODULE_VERSION("1.0");
 
 #define DEVICE_NAME "minheap_device"
