@@ -1,4 +1,4 @@
-obj-m += minheap_driver.o
+obj-m += tested.o
 
 all:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules

@@ -1,0 +1,143 @@
+#include <linux/init.h>
+#include <linux/module.h>
+#include <linux/device.h>
+#include <linux/kernel.h>
+#include <linux/fs.h>
+#include <linux/uaccess.h>
+#include <linux/mutex.h>
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Eduardo");
+MODULE_DESCRIPTION("Driver de Min Heap (Manual)");
+MODULE_VERSION("1.0");
+
+#define DEVICE_NAME "minheap_device"
+#define CLASS_NAME "minheap_class"
+#define MAX_SIZE 100 
+
+static int major;
+static struct class* cls;
+static struct device* dev;
+static int heap[MAX_SIZE];
+static int size = 0;
+static DEFINE_MUTEX(lock);
+
+// --- Funções Auxiliares da Heap ---
+static void h_swap(int *a, int *b) { 
+    int t = *a; 
+    *a = *b; 
+    *b = t; 
+}
+
+static void heap_up(int i) {
+    if (i && heap[(i-1)/2] > heap[i]) {
+        h_swap(&heap[i], &heap[(i-1)/2]);
+        heap_up((i-1)/2);
+    }
+}
+
+static void heap_down(int i) {
+    int s = i, l = 2*i+1, r = 2*i+2;
+    if (l < size && heap[l] < heap[s]) s = l;
+    if (r < size && heap[r] < heap[s]) s = r;
+    if (s != i) { 
+        h_swap(&heap[i], &heap[s]); 
+        heap_down(s); 
+    }
+}
+
+static int internal_insert(int val) {
+    if (size >= MAX_SIZE) return -ENOMEM;
+    heap[size++] = val;
+    heap_up(size-1);
+    return 0;
+}
+
+static int internal_extract(int *val) {
+    if (size <= 0) return -EINVAL;
+    *val = heap[0];
+    heap[0] = heap[--size];
+    heap_down(0);
+    return 0;
+}
+
+// --- Operações de Arquivo (User Space <-> Kernel) ---
+
+static ssize_t dev_write(struct file *f, const char *buf, size_t len, loff_t *off) {
+    char kbuf[32];
+    int val;
+    
+    // 1. Copia a string do usuário
+    if (len > 31 || copy_from_user(kbuf, buf, len)) return -EFAULT;
+    kbuf[len] = 0;
+    
+    // 2. Converte para inteiro
+    if (kstrtoint(kbuf, 10, &val) < 0) return -EINVAL;
+
+    // 3. Insere na Heap com proteção Mutex
+    mutex_lock(&lock);
+    if (internal_insert(val) == 0) {
+        printk(KERN_INFO "MinHeap: Inserido %d. Total: %d\n", val, size);
+    } else {
+        printk(KERN_ALERT "MinHeap: Heap Cheia!\n");
+        mutex_unlock(&lock);
+        return -ENOMEM;
+    }
+    mutex_unlock(&lock);
+    
+    return len;
+}
+
+static ssize_t dev_read(struct file *f, char *buf, size_t len, loff_t *off) {
+    char kbuf[32];
+    int val, l;
+
+    if (*off > 0) return 0; // EOF (Fim de arquivo)
+
+    mutex_lock(&lock);
+    if (internal_extract(&val) != 0) {
+        printk(KERN_INFO "MinHeap: Heap Vazia!\n");
+        mutex_unlock(&lock);
+        return 0;
+    }
+    mutex_unlock(&lock);
+
+    // Formata para string e envia ao usuário
+    l = snprintf(kbuf, 32, "%d\n", val);
+    if (copy_to_user(buf, kbuf, l)) return -EFAULT;
+    
+    *off += l;
+    printk(KERN_INFO "MinHeap: Removido %d\n", val);
+    return l;
+}
+
+static struct file_operations fops = { 
+    .owner = THIS_MODULE, 
+    .write = dev_write, 
+    .read = dev_read 
+};
+
+// --- Inicialização e Saída ---
+static int __init my_init(void) {
+    major = register_chrdev(0, DEVICE_NAME, &fops);
+    if (major < 0) return major;
+    
+    cls = class_create(CLASS_NAME); 
+    if (IS_ERR(cls)) { unregister_chrdev(major, DEVICE_NAME); return PTR_ERR(cls); }
+
+    dev = device_create(cls, NULL, MKDEV(major, 0), NULL, DEVICE_NAME);
+    if (IS_ERR(dev)) { class_destroy(cls); unregister_chrdev(major, DEVICE_NAME); return PTR_ERR(dev); }
+
+    printk(KERN_INFO "MinHeap: Driver carregado e pronto para testes manuais!\n");
+    return 0;
+}
+
+static void __exit my_exit(void) {
+    device_destroy(cls, MKDEV(major, 0));
+    class_destroy(cls);
+    unregister_chrdev(major, DEVICE_NAME);
+    printk(KERN_INFO "MinHeap: Driver descarregado.\n");
+}
+
+module_init(my_init);
+module_exit(my_exit);
