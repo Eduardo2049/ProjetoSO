@@ -9,11 +9,11 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Grupo 5");
 MODULE_DESCRIPTION("Driver de Min Heap");
-MODULE_VERSION("1.0");
+MODULE_VERSION("2.1");
 
 #define DEVICE_NAME "minheap_device"
 #define CLASS_NAME "minheap_class"
-#define MAX_SIZE 100 
+#define MAX_SIZE 100
 
 static int major;
 static struct class* cls;
@@ -23,26 +23,36 @@ static int size = 0;
 static DEFINE_MUTEX(lock);
 
 // --- Funções Auxiliares da Heap ---
-static void h_swap(int *a, int *b) { 
-    int t = *a; 
-    *a = *b; 
-    *b = t; 
+static void h_swap(int *a, int *b) {
+    int t = *a;
+    *a = *b;
+    *b = t;
 }
 
 static void heap_up(int i) {
-    if (i && heap[(i-1)/2] > heap[i]) {
-        h_swap(&heap[i], &heap[(i-1)/2]);
-        heap_up((i-1)/2);
+    while (i > 0) {
+        int parent = (i - 1) / 2;
+
+        if (heap[parent] <= heap[i])
+            break;
+
+        h_swap(&heap[i], &heap[parent]);
+        i = parent;
     }
 }
 
 static void heap_down(int i) {
-    int s = i, l = 2*i+1, r = 2*i+2;
-    if (l < size && heap[l] < heap[s]) s = l;
-    if (r < size && heap[r] < heap[s]) s = r;
-    if (s != i) { 
-        h_swap(&heap[i], &heap[s]); 
-        heap_down(s); 
+    while (true) {
+        int s = i;
+        int l = 2 * i + 1;
+        int r = 2 * i + 2;
+
+        if (l < size && heap[l] < heap[s]) s = l;
+        if (r < size && heap[r] < heap[s]) s = r;
+        if (s == i) break;
+
+        h_swap(&heap[i], &heap[s]);
+        i = s;
     }
 }
 
@@ -62,25 +72,23 @@ static int internal_extract(int *val) {
 }
 
 // --- Operações de Arquivo (User Space <-> Kernel) ---
-
 static ssize_t dev_write(struct file *f, const char *buf, size_t len, loff_t *off) {
     char kbuf[32];
     int val;
-    
+
     // 1. Copia a string do usuário
     if (len > 31 || copy_from_user(kbuf, buf, len)) return -EFAULT;
     kbuf[len] = 0;
-    
+
     // 2. Converte para inteiro
     if (kstrtoint(kbuf, 10, &val) < 0) return -EINVAL;
 
-   
-    // 3. Insere na Heap com proteção Mutex
+    // 3. Insere na Heap ou limpa caso -1
     mutex_lock(&lock);
-
-    
-    if (val == -1){ size=0;}
-    else if (internal_insert(val) == 0) {
+    if (val == -1) {
+    	size = 0;
+    	printk(KERN_INFO "MinHeap: Heap foi Limpa!");
+    } else if (internal_insert(val) == 0) {
         printk(KERN_INFO "MinHeap: Inserido %d. Total: %d\n", val, size);
     } else {
         printk(KERN_ALERT "MinHeap: Heap Cheia!\n");
@@ -88,7 +96,7 @@ static ssize_t dev_write(struct file *f, const char *buf, size_t len, loff_t *of
         return -ENOMEM;
     }
     mutex_unlock(&lock);
-    
+
     return len;
 }
 
@@ -109,24 +117,24 @@ static ssize_t dev_read(struct file *f, char *buf, size_t len, loff_t *off) {
     // Formata para string e envia ao usuário
     l = snprintf(kbuf, 32, "%d\n", val);
     if (copy_to_user(buf, kbuf, l)) return -EFAULT;
-    
+
     *off += l;
     printk(KERN_INFO "MinHeap: Removido %d\n", val);
     return l;
 }
 
-static struct file_operations fops = { 
-    .owner = THIS_MODULE, 
-    .write = dev_write, 
-    .read = dev_read 
+static struct file_operations fops = {
+    .owner = THIS_MODULE,
+    .write = dev_write,
+    .read = dev_read
 };
 
 // --- Inicialização e Saída ---
 static int __init my_init(void) {
     major = register_chrdev(0, DEVICE_NAME, &fops);
     if (major < 0) return major;
-    
-    cls = class_create(CLASS_NAME); 
+
+    cls = class_create(CLASS_NAME);
     if (IS_ERR(cls)) { unregister_chrdev(major, DEVICE_NAME); return PTR_ERR(cls); }
 
     dev = device_create(cls, NULL, MKDEV(major, 0), NULL, DEVICE_NAME);
